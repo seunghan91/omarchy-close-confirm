@@ -2,13 +2,13 @@
 # Changes apply on the next keypress; no reload needed.
 
 # Window classes to treat as terminals (see `hyprctl activewindow`).
-TERMINALS="foot Alacritty"
+TERMINALS="foot footclient Alacritty"
 
 # busy   = ask only while a program runs in the foreground (default)
 # always = ask every time a terminal is closed
 ASK="busy"
 
-WIDTH=380
+WIDTH=520
 
 # The text follows your Omarchy language (Setup > Language), then $LANG.
 # Pin a language from i18n.json instead:

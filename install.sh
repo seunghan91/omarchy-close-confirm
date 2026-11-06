@@ -4,46 +4,32 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
-bin_dir="$HOME/.local/bin"
-bindings="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua"
-begin="-- >>> omarchy-close-confirm >>>"
-end="-- <<< omarchy-close-confirm <<<"
+source ./lib.sh
 
 for cmd in hyprctl jq pgrep omarchy-menu-select; do
-  command -v "$cmd" >/dev/null || { echo "Missing $cmd. This needs Omarchy 4 with the Lua Hyprland config." >&2; exit 1; }
+  command -v "$cmd" >/dev/null || die "Missing $cmd. This needs Omarchy 4 with the Lua Hyprland config."
 done
-[[ -f $bindings ]] || { echo "Not found: $bindings (Omarchy 4 Lua config expected)." >&2; exit 1; }
+[[ -f $bindings ]] || die "Not found: $bindings (Omarchy 4 Lua config expected)."
+target=$(readlink -f "$bindings")
+check_markers "$target"
 
-install -Dm755 bin/omarchy-close-confirm "$bin_dir/omarchy-close-confirm"
+install -Dm755 bin/omarchy-close-confirm "$HOME/.local/bin/omarchy-close-confirm"
 install -Dm644 i18n.json "${XDG_DATA_HOME:-$HOME/.local/share}/omarchy-close-confirm/i18n.json"
 
-backup="$bindings.bak.$(date +%Y%m%d-%H%M%S-%N)"
-cp "$bindings" "$backup"
+backup="$target.bak.$(date +%Y%m%d-%H%M%S-%N)"
+cp -p "$target" "$backup"
 
-tmp=$(mktemp)
-sed "/^$begin\$/,/^$end\$/d" "$bindings" >"$tmp"
-cat >>"$tmp" <<LUA
-$begin
+block="$begin
 -- Ask before closing a busy terminal: https://github.com/seunghan91/omarchy-close-confirm
-hl.unbind("SUPER + W")
-o.bind("SUPER + W", "Close window", os.getenv("HOME") .. "/.local/bin/omarchy-close-confirm")
-hl.unbind("SUPER + Q")
-o.bind("SUPER + Q", "Close window", os.getenv("HOME") .. "/.local/bin/omarchy-close-confirm")
-$end
-LUA
-cat "$tmp" >"$bindings"
-rm -f "$tmp"
+local close_confirm = o.shell_quote(os.getenv(\"HOME\") .. \"/.local/bin/omarchy-close-confirm\")
+hl.unbind(\"SUPER + W\")
+o.bind(\"SUPER + W\", \"Close window\", close_confirm)
+hl.unbind(\"SUPER + Q\")
+o.bind(\"SUPER + Q\", \"Close window\", close_confirm)
+$end"
 
-hyprctl reload >/dev/null
-sleep 1
-errors=$(hyprctl configerrors)
-if [[ -n ${errors//[[:space:]]/} ]]; then
-  cp "$backup" "$bindings"
-  hyprctl reload >/dev/null
-  echo "Hyprland reported config errors, so bindings.lua was restored:" >&2
-  echo "$errors" >&2
-  exit 1
-fi
+rewrite_bindings "$target" "$block"
+reload_or_restore "$target" "$backup"
 
 echo "Installed. SUPER+W and SUPER+Q now ask before closing a busy terminal."
 echo "Backup of your bindings: $backup"

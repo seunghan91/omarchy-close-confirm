@@ -12,10 +12,10 @@ set -uo pipefail
 # Window classes treated as terminals. Ghostty and Kitty have their own close
 # confirmation (confirm-close-surface / confirm_os_window_close), so they are
 # not listed by default.
-TERMINALS="foot Alacritty"
+TERMINALS="foot footclient Alacritty"
 # busy: ask only while a program runs in the foreground. always: ask every time.
 ASK="busy"
-WIDTH=380
+WIDTH=520
 # Text follows the Omarchy language (Setup > Language), then $LANG. Set
 # LANGUAGE_CODE=ko (any code in i18n.json) or any of these to override it.
 LANGUAGE_CODE=""
@@ -24,86 +24,78 @@ PROMPT_RUNNING=""   # %1 becomes the name of the running program
 CANCEL=""
 CLOSE=""
 
-conf="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-close-confirm.conf"
-# shellcheck source=/dev/null
-[[ -f $conf ]] && source "$conf"
-
-self_dir=$(dirname "$(readlink -f "$0")")
-catalog=
-for f in "${XDG_DATA_HOME:-$HOME/.local/share}/omarchy-close-confirm/i18n.json" "$self_dir/../i18n.json"; do
-  [[ -f $f ]] && { catalog=$f; break; }
-done
-
-# Omarchy's own language file first, the same one omarchy-i18n reads, then
-# the session locale: ko_KR.UTF-8 -> ko, pt_BR -> pt-BR, zh_TW -> zh-TW.
-pick_language() {
-  local code="" lang=${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}
-  local omarchy_file=${OMARCHY_LANGUAGE_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/language}
-  if [[ -n $LANGUAGE_CODE ]]; then
-    code=$LANGUAGE_CODE
-  elif [[ -f $omarchy_file ]]; then
-    read -r code <"$omarchy_file" || true
-    code=${code//[[:space:]]/}
-  fi
-  if [[ -z $code && $lang =~ ^([a-z]{2,3})(_([A-Z]{2}))? ]]; then
-    local ll=${BASH_REMATCH[1]} cc=${BASH_REMATCH[3]}
-    case $ll in
-      zh) [[ $cc == TW || $cc == HK || $cc == MO ]] && code=zh-TW || code=zh-CN ;;
-      pt) [[ $cc == BR ]] && code=pt-BR || code=pt ;;
-      es) code=es-MX ;;
-      nb | nn) code=no ;;
-      tl) code=fil ;;
-      *) code=$ll ;;
-    esac
-  fi
-  echo "${code:-en}"
-}
-
-text() {
-  [[ -n $catalog ]] || return 0
-  jq -r --arg l "$1" --arg k "$2" '(.[$l][$k] // .en[$k] // empty)' "$catalog"
-}
-
-language=$(pick_language)
-[[ -n $PROMPT ]] || PROMPT=$(text "$language" prompt)
-[[ -n $PROMPT_RUNNING ]] || PROMPT_RUNNING=$(text "$language" running)
-[[ -n $CANCEL ]] || CANCEL=$(text "$language" cancel)
-[[ -n $CLOSE ]] || CLOSE=$(text "$language" close)
-: "${PROMPT:=Close this terminal?}" "${PROMPT_RUNNING:=%1 is still running. Close?}" "${CANCEL:=Cancel}" "${CLOSE:=Close}"
+SHELLS=" bash zsh fish sh dash ksh mksh tcsh csh nu xonsh elvish oil osh ysh "
 
 win=$(hyprctl activewindow -j 2>/dev/null) || exit 0
-addr=$(jq -r '.address // empty' <<<"$win")
-class=$(jq -r '.class // empty' <<<"$win")
-pid=$(jq -r '.pid // empty' <<<"$win")
-[[ -z $addr ]] && exit 0
+IFS=$'\t' read -r addr class pid < <(jq -r '[.address // "", .class // "", (.pid // "" | tostring)] | @tsv' <<<"$win")
+[[ -n ${addr:-} ]] || exit 0
 
 close() {
   hyprctl dispatch "hl.dsp.window.close({ window = \"address:$addr\" })" >/dev/null
 }
 
+# A mistake in the user's settings must never leave SUPER+W unable to close
+# anything, so the file is read without -u and its exit status is ignored.
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-close-confirm.conf"
+if [[ -f $conf ]]; then
+  set +u
+  # shellcheck source=/dev/null
+  source "$conf" >/dev/null 2>&1 || true
+  set -u
+fi
+
 is_terminal() {
-  local t
-  for t in $TERMINALS; do
+  local t terminals
+  read -ra terminals <<<"$TERMINALS"
+  for t in "${terminals[@]}"; do
     [[ $class == "$t" ]] && return 0
   done
   return 1
 }
 
-# Prints the foreground program's name and succeeds when the terminal's shell
-# is not the foreground process group. When the window can't be mapped to one
-# shell (a terminal server owning several windows, an odd process tree), it
-# succeeds with no name so the caller asks anyway: asking is the safe side.
+# Name of the program in the foreground of one terminal child, or nothing when
+# that child is a shell sitting at its prompt. Returns 1 when idle.
+child_foreground() {
+  local child=$1 pgid tpgid comm name
+  read -r pgid tpgid comm < <(ps -o pgid=,tpgid=,comm= -p "$child" 2>/dev/null) || return 1
+  comm=${comm#-}
+  # Started directly (`foot nvim`, `exec nvim`): the program is the child.
+  if [[ $SHELLS != *" $comm "* ]]; then
+    echo "$comm"
+    return 0
+  fi
+  [[ -n ${tpgid:-} && $tpgid != -1 && $tpgid != "$pgid" ]] || return 1
+  # The group leader may have exited while the rest of a pipeline runs on.
+  name=$(ps -o comm= -p "$tpgid" 2>/dev/null || ps -o comm= -g "$tpgid" 2>/dev/null | head -n 1)
+  echo "${name:-}"
+  return 0
+}
+
+# Prints the foreground program's name and succeeds when the terminal is busy.
+# A terminal process that owns several windows (Alacritty, a foot server) has
+# several children; it counts as idle only when every one of them is idle.
 foreground_program() {
-  local children shell pgid tpgid
+  local children child busy=() name
   [[ $pid =~ ^[0-9]+$ ]] || return 0
   mapfile -t children < <(pgrep -P "$pid")
-  (( ${#children[@]} == 1 )) || return 0
-  shell=${children[0]}
-  read -r pgid tpgid < <(ps -o pgid=,tpgid= -p "$shell") || return 0
-  [[ -n ${tpgid:-} && $tpgid != -1 ]] || return 0
-  [[ $tpgid == "$pgid" ]] && return 1
-  ps -o comm= -p "$tpgid" 2>/dev/null
+  (( ${#children[@]} > 0 )) || return 1
+  for child in "${children[@]}"; do
+    if name=$(child_foreground "$child"); then
+      busy+=("$name")
+    fi
+  done
+  (( ${#busy[@]} > 0 )) || return 1
+  # One window per process: name the program. Several: we can't tell which
+  # window is this one, so ask without a name.
+  (( ${#children[@]} == 1 )) && echo "${busy[0]}"
   return 0
+}
+
+# The dialog can stay open a while. Only close if the same window, owned by
+# the same process, still exists, so a reused address never closes a stranger.
+still_same_window() {
+  hyprctl clients -j 2>/dev/null |
+    jq -e --arg a "$addr" --arg p "$pid" 'any(.[]; .address == $a and (.pid | tostring) == $p)' >/dev/null
 }
 
 if ! is_terminal; then
@@ -111,17 +103,75 @@ if ! is_terminal; then
   exit 0
 fi
 
-prompt=$PROMPT
-if program=$(foreground_program); then
-  if [[ -n $program ]]; then
-    prompt=${PROMPT_RUNNING//%1/$program}
-    prompt=${prompt//%s/$program}
-  fi
-elif [[ $ASK != always ]]; then
+program=""
+if ! program=$(foreground_program) && [[ $ASK != always ]]; then
   close
   exit 0
 fi
 
+# --- Only now, with a dialog to show, look up the text. ---
+
+self_dir=$(dirname "$(readlink -f "$0")")
+catalog=
+for f in "${XDG_DATA_HOME:-$HOME/.local/share}/omarchy-close-confirm/i18n.json" "$self_dir/../i18n.json"; do
+  [[ -f $f ]] && { catalog=$f; break; }
+done
+
+# ko_KR.UTF-8 -> ko, pt_BR -> pt-BR, zh_TW -> zh-TW, nb -> no, es -> es-MX.
+normalize_language() {
+  [[ $1 =~ ^([a-z]{2,3})([_-]([A-Za-z]{2}))? ]] || return 0
+  local ll=${BASH_REMATCH[1]} cc=${BASH_REMATCH[3]^^}
+  case $ll in
+    zh) [[ $cc == TW || $cc == HK || $cc == MO ]] && echo zh-TW || echo zh-CN ;;
+    pt) [[ $cc == BR ]] && echo pt-BR || echo pt ;;
+    es) echo es-MX ;;
+    nb | nn) echo no ;;
+    tl) echo fil ;;
+    *) echo "$ll" ;;
+  esac
+}
+
+# The setting here, then Omarchy's own language file (the one omarchy-i18n
+# reads), then the session locale. The first that has a translation wins.
+pick_language() {
+  local omarchy_file=${OMARCHY_LANGUAGE_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/language}
+  local omarchy_code="" raw candidate
+  if [[ -f $omarchy_file ]]; then
+    read -r omarchy_code <"$omarchy_file" || true
+    omarchy_code=${omarchy_code//[[:space:]]/}
+  fi
+  for raw in "$LANGUAGE_CODE" "$omarchy_code" "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}"; do
+    [[ -n $raw ]] || continue
+    for candidate in "$raw" "$(normalize_language "$raw")"; do
+      [[ -n $candidate ]] || continue
+      if jq -e --arg l "$candidate" 'has($l)' "$catalog" >/dev/null 2>&1; then
+        echo "$candidate"
+        return
+      fi
+    done
+  done
+  echo en
+}
+
+if [[ -n $catalog ]]; then
+  language=$(pick_language)
+  IFS=$'\t' read -r t_prompt t_running t_cancel t_close < <(
+    jq -r --arg l "$language" '[(.[$l] // {}), .en] as [$x, $en]
+      | [($x.prompt // $en.prompt), ($x.running // $en.running), ($x.cancel // $en.cancel), ($x.close // $en.close)] | @tsv' "$catalog"
+  )
+  : "${PROMPT:=${t_prompt:-}}" "${PROMPT_RUNNING:=${t_running:-}}" "${CANCEL:=${t_cancel:-}}" "${CLOSE:=${t_close:-}}"
+fi
+: "${PROMPT:=Close this terminal?}" "${PROMPT_RUNNING:=%1 is still running. Close?}" "${CANCEL:=Cancel}" "${CLOSE:=Close}"
+
+prompt=$PROMPT
+if [[ -n $program ]]; then
+  template=$PROMPT_RUNNING
+  # Older configs used %s; keep them working.
+  [[ $template == *%1* ]] || template=${template//%s/%1}
+  # Quoting the replacement keeps & and \ in a program name literal.
+  prompt=${template//%1/"$program"}
+fi
+
 choice=$(omarchy-menu-select "$prompt" "$CANCEL" "$CLOSE" -- --width "$WIDTH") || exit 0
-[[ $choice == "$CLOSE" ]] && close
+[[ $choice == "$CLOSE" ]] && still_same_window && close
 exit 0
