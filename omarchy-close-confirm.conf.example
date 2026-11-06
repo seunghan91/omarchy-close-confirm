@@ -1,0 +1,15 @@
+# Copy to ~/.config/omarchy-close-confirm.conf and change what you need.
+# Changes apply on the next keypress; no reload needed.
+
+# Window classes to treat as terminals (see `hyprctl activewindow`).
+TERMINALS="foot Alacritty"
+
+# busy   = ask only while a program runs in the foreground (default)
+# always = ask every time a terminal is closed
+ASK="busy"
+
+PROMPT="Close this terminal?"
+PROMPT_RUNNING="%s is still running. Close?"   # %s = program name
+CANCEL="Cancel"
+CLOSE="Close"
+WIDTH=380

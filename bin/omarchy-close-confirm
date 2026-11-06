@@ -1,0 +1,79 @@
+#!/bin/bash
+# omarchy-close-confirm: close the active window, but ask first when it is a
+# terminal that is still running something (an agent, an editor, ssh, a build).
+# Any other window, and an idle terminal sitting at its shell prompt, closes
+# right away, the same as Omarchy's stock SUPER+W.
+#
+# Settings live in ~/.config/omarchy-close-confirm.conf (a bash file). See
+# omarchy-close-confirm.conf.example for every option.
+
+set -uo pipefail
+
+# Window classes treated as terminals. Ghostty and Kitty have their own close
+# confirmation (confirm-close-surface / confirm_os_window_close), so they are
+# not listed by default.
+TERMINALS="foot Alacritty"
+# busy: ask only while a program runs in the foreground. always: ask every time.
+ASK="busy"
+PROMPT="Close this terminal?"
+# %s becomes the name of the running program.
+PROMPT_RUNNING="%s is still running. Close?"
+CANCEL="Cancel"
+CLOSE="Close"
+WIDTH=380
+
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-close-confirm.conf"
+# shellcheck source=/dev/null
+[[ -f $conf ]] && source "$conf"
+
+win=$(hyprctl activewindow -j 2>/dev/null) || exit 0
+addr=$(jq -r '.address // empty' <<<"$win")
+class=$(jq -r '.class // empty' <<<"$win")
+pid=$(jq -r '.pid // empty' <<<"$win")
+[[ -z $addr ]] && exit 0
+
+close() {
+  hyprctl dispatch "hl.dsp.window.close({ window = \"address:$addr\" })" >/dev/null
+}
+
+is_terminal() {
+  local t
+  for t in $TERMINALS; do
+    [[ $class == "$t" ]] && return 0
+  done
+  return 1
+}
+
+# Prints the foreground program's name and succeeds when the terminal's shell
+# is not the foreground process group. When the window can't be mapped to one
+# shell (a terminal server owning several windows, an odd process tree), it
+# succeeds with no name so the caller asks anyway: asking is the safe side.
+foreground_program() {
+  local children shell pgid tpgid
+  [[ $pid =~ ^[0-9]+$ ]] || return 0
+  mapfile -t children < <(pgrep -P "$pid")
+  (( ${#children[@]} == 1 )) || return 0
+  shell=${children[0]}
+  read -r pgid tpgid < <(ps -o pgid=,tpgid= -p "$shell") || return 0
+  [[ -n ${tpgid:-} && $tpgid != -1 ]] || return 0
+  [[ $tpgid == "$pgid" ]] && return 1
+  ps -o comm= -p "$tpgid" 2>/dev/null
+  return 0
+}
+
+if ! is_terminal; then
+  close
+  exit 0
+fi
+
+prompt=$PROMPT
+if program=$(foreground_program); then
+  [[ -n $program ]] && printf -v prompt "$PROMPT_RUNNING" "$program"
+elif [[ $ASK != always ]]; then
+  close
+  exit 0
+fi
+
+choice=$(omarchy-menu-select "$prompt" "$CANCEL" "$CLOSE" -- --width "$WIDTH") || exit 0
+[[ $choice == "$CLOSE" ]] && close
+exit 0
