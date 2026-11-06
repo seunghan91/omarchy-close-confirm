@@ -8,8 +8,14 @@ TERMINALS="foot Alacritty"
 # always = ask every time a terminal is closed
 ASK="busy"
 
-PROMPT="Close this terminal?"
-PROMPT_RUNNING="%s is still running. Close?"   # %s = program name
-CANCEL="Cancel"
-CLOSE="Close"
 WIDTH=380
+
+# The text follows your Omarchy language (Setup > Language), then $LANG.
+# Pin a language from i18n.json instead:
+# LANGUAGE_CODE="ko"
+
+# Or write your own text. Empty means "use the translation".
+# PROMPT="Close this terminal?"
+# PROMPT_RUNNING="%1 is still running. Close?"   # %1 = program name
+# CANCEL="Cancel"
+# CLOSE="Close"

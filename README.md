@@ -40,6 +40,23 @@ If Hyprland reports a config error after the change, the backup is restored.
 
 Uninstall with `./uninstall.sh`; the keys go back to Omarchy's defaults.
 
+## Languages
+
+The dialog speaks every language Omarchy ships (50, from Arabic to Chinese).
+It follows your Omarchy language (**Setup > Language**, the same setting the
+rest of Omarchy uses), then your `$LANG`, then English.
+
+| Language | Busy terminal prompt |
+|---|---|
+| English | *claude is still running. Close?* |
+| Deutsch | *claude läuft noch. Schließen?* |
+| 日本語 | *claude はまだ実行中です。閉じますか？* |
+| 한국어 | *claude 실행 중입니다. 닫을까요?* |
+
+Translations live in [`i18n.json`](i18n.json). They were machine-assisted, so
+corrections from native speakers are very welcome: edit the four strings for
+your language and open a PR. `%1` is the running program's name.
+
 ## Options
 
 Copy `omarchy-close-confirm.conf.example` to
@@ -48,14 +65,11 @@ Copy `omarchy-close-confirm.conf.example` to
 ```bash
 TERMINALS="foot Alacritty"   # window classes treated as terminals
 ASK="busy"                   # or "always" to ask for every terminal
-PROMPT="Close this terminal?"
-PROMPT_RUNNING="%s is still running. Close?"
-CANCEL="Cancel"
-CLOSE="Close"
+LANGUAGE_CODE="ko"           # pin a language from i18n.json
+PROMPT_RUNNING="%1 is busy!" # or write any string yourself
 ```
 
-Changes apply on the next keypress. The strings are how you translate it,
-e.g. `PROMPT="이 터미널을 닫을까요?"`, `CANCEL="취소"`, `CLOSE="닫기"`.
+Changes apply on the next keypress.
 
 Ghostty and Kitty already have their own setting for this
 (`confirm-close-surface`, `confirm_os_window_close`), so they aren't listed by
@@ -68,6 +82,15 @@ default. Add their class to `TERMINALS` if you prefer this menu.
   immediately.
 - A terminal server that owns several windows (e.g. `footclient` with
   `foot --server`) can't be mapped to one shell, so those windows always ask.
+
+## Related
+
+- [omacom/omarchy#17236](https://github.com/omacom/omarchy/pull/17236) proposes
+  a built-in Foot confirmation, and
+  [#17259](https://github.com/omacom/omarchy/pull/17259) turns on Ghostty and
+  Kitty's native one. If those land, you may not need this.
+- [flaviozantut/omarchy-close-confirm](https://github.com/flaviozantut/omarchy-close-confirm)
+  is a shell plugin that asks before closing *any* window.
 
 ## License
 

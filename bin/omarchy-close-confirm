@@ -15,16 +15,61 @@ set -uo pipefail
 TERMINALS="foot Alacritty"
 # busy: ask only while a program runs in the foreground. always: ask every time.
 ASK="busy"
-PROMPT="Close this terminal?"
-# %s becomes the name of the running program.
-PROMPT_RUNNING="%s is still running. Close?"
-CANCEL="Cancel"
-CLOSE="Close"
 WIDTH=380
+# Text follows the Omarchy language (Setup > Language), then $LANG. Set
+# LANGUAGE_CODE=ko (any code in i18n.json) or any of these to override it.
+LANGUAGE_CODE=""
+PROMPT=""
+PROMPT_RUNNING=""   # %1 becomes the name of the running program
+CANCEL=""
+CLOSE=""
 
 conf="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-close-confirm.conf"
 # shellcheck source=/dev/null
 [[ -f $conf ]] && source "$conf"
+
+self_dir=$(dirname "$(readlink -f "$0")")
+catalog=
+for f in "${XDG_DATA_HOME:-$HOME/.local/share}/omarchy-close-confirm/i18n.json" "$self_dir/../i18n.json"; do
+  [[ -f $f ]] && { catalog=$f; break; }
+done
+
+# Omarchy's own language file first, the same one omarchy-i18n reads, then
+# the session locale: ko_KR.UTF-8 -> ko, pt_BR -> pt-BR, zh_TW -> zh-TW.
+pick_language() {
+  local code="" lang=${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}
+  local omarchy_file=${OMARCHY_LANGUAGE_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/language}
+  if [[ -n $LANGUAGE_CODE ]]; then
+    code=$LANGUAGE_CODE
+  elif [[ -f $omarchy_file ]]; then
+    read -r code <"$omarchy_file" || true
+    code=${code//[[:space:]]/}
+  fi
+  if [[ -z $code && $lang =~ ^([a-z]{2,3})(_([A-Z]{2}))? ]]; then
+    local ll=${BASH_REMATCH[1]} cc=${BASH_REMATCH[3]}
+    case $ll in
+      zh) [[ $cc == TW || $cc == HK || $cc == MO ]] && code=zh-TW || code=zh-CN ;;
+      pt) [[ $cc == BR ]] && code=pt-BR || code=pt ;;
+      es) code=es-MX ;;
+      nb | nn) code=no ;;
+      tl) code=fil ;;
+      *) code=$ll ;;
+    esac
+  fi
+  echo "${code:-en}"
+}
+
+text() {
+  [[ -n $catalog ]] || return 0
+  jq -r --arg l "$1" --arg k "$2" '(.[$l][$k] // .en[$k] // empty)' "$catalog"
+}
+
+language=$(pick_language)
+[[ -n $PROMPT ]] || PROMPT=$(text "$language" prompt)
+[[ -n $PROMPT_RUNNING ]] || PROMPT_RUNNING=$(text "$language" running)
+[[ -n $CANCEL ]] || CANCEL=$(text "$language" cancel)
+[[ -n $CLOSE ]] || CLOSE=$(text "$language" close)
+: "${PROMPT:=Close this terminal?}" "${PROMPT_RUNNING:=%1 is still running. Close?}" "${CANCEL:=Cancel}" "${CLOSE:=Close}"
 
 win=$(hyprctl activewindow -j 2>/dev/null) || exit 0
 addr=$(jq -r '.address // empty' <<<"$win")
@@ -68,7 +113,10 @@ fi
 
 prompt=$PROMPT
 if program=$(foreground_program); then
-  [[ -n $program ]] && printf -v prompt "$PROMPT_RUNNING" "$program"
+  if [[ -n $program ]]; then
+    prompt=${PROMPT_RUNNING//%1/$program}
+    prompt=${prompt//%s/$program}
+  fi
 elif [[ $ASK != always ]]; then
   close
   exit 0

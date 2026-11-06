@@ -15,6 +15,7 @@ done
 [[ -f $bindings ]] || { echo "Not found: $bindings (Omarchy 4 Lua config expected)." >&2; exit 1; }
 
 install -Dm755 bin/omarchy-close-confirm "$bin_dir/omarchy-close-confirm"
+install -Dm644 i18n.json "${XDG_DATA_HOME:-$HOME/.local/share}/omarchy-close-confirm/i18n.json"
 
 backup="$bindings.bak.$(date +%Y%m%d-%H%M%S-%N)"
 cp "$bindings" "$backup"
